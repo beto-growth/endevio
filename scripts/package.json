@@ -1,0 +1,16 @@
+{
+  "name": "hubspot-listings-sync",
+  "version": "1.0.0",
+  "description": "Sync ReapCRM XML feed into HubSpot Listings custom object",
+  "type": "commonjs",
+  "main": "sync-listings.js",
+  "scripts": {
+    "sync": "node sync-listings.js"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.4.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
