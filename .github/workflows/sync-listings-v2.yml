@@ -1,0 +1,43 @@
+name: Sync Listings v2 (with watermarked images)
+
+on:
+  # 12:00 AM Malta (UTC+2 summer / UTC+1 winter)
+  # Summer (CEST): 22:00 UTC | Winter (CET): 23:00 UTC
+  schedule:
+    - cron: '0 22 * * *'
+    - cron: '0 10 * * *'
+
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  sync-v2:
+    name: Sync HubSpot Listings v2
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # v2 tarda más por el procesamiento de imágenes
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Run sync v2
+        working-directory: scripts
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_TOKEN }}
+          # Carpetas hardcodeadas en el script:
+          #   originales  → /quivani/images-xml
+          #   watermarked → /quivani/images-watermark
+          # Imágenes procesadas en paralelo (bajar si hay rate limit issues)
+          IMAGE_CONCURRENCY: 5
+        run: node sync-listings-v2.js
