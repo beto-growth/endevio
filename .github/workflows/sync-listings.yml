@@ -1,9 +1,11 @@
 name: Sync Listings from ReapCRM XML
 
 on:
-  # Run every day at 06:00 UTC
+  # 12:00 AM Malta (UTC+2 summer / UTC+1 winter)
+  # Summer (CEST): 22:00 UTC | Winter (CET): 23:00 UTC
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 22 * * *'
+    - cron: '0 10 * * *'
 
   # Allow manual trigger from GitHub Actions tab
   workflow_dispatch:
