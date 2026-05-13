@@ -245,16 +245,22 @@ async function fetchWatermarkFromHubSpot() {
 /**
  * Busca un archivo en HubSpot Files por nombre exacto.
  * Retorna la URL pública o null si no existe.
+ *
+ * ⚠️  La API limita el parámetro `name` a 20 caracteres.
+ * Buscamos con el prefijo de 20 chars y filtramos por nombre exacto client-side.
  */
 async function findFileByName(filename) {
   try {
-    const qs = new URLSearchParams({ name: filename, properties: 'url,name' });
+    const qs = new URLSearchParams({
+      name: filename.slice(0, 20),  // límite de HubSpot Files search API
+      properties: 'url,name',
+    });
     const res = await fetch(`${HS_BASE}/files/v3/files/search?${qs}`, {
       headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
     });
     if (!res.ok) return null;
     const data = await res.json();
-    // La búsqueda puede devolver matches parciales, filtramos por nombre exacto
+    // La búsqueda devuelve resultados que contienen el prefijo → filtramos por nombre exacto
     const match = (data.results ?? []).find(f => f.name === filename);
     return match?.url ?? null;
   } catch {
