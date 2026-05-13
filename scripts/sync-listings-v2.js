@@ -38,8 +38,7 @@ const BATCH_SIZE           = 100;
 const CONCURRENCY          = parseInt(process.env.IMAGE_CONCURRENCY ?? '5', 10);
 const FOLDER_ORIGINALS     = '/quivani/images-xml';        // imágenes originales del CRM
 const FOLDER_WATERMARK     = '/quivani/images-watermark';  // imágenes procesadas (van en all_images)
-const WATERMARK_HS_FOLDER  = '/quivani';                   // carpeta donde vive el watermark
-const WATERMARK_HS_NAME    = 'watermark.png';              // nombre exacto en HubSpot Files
+const WATERMARK_FILE_ID    = '212770895196';               // file ID en HubSpot Files (quivani/watermark.png)
 
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
 if (!HUBSPOT_TOKEN) {
@@ -221,31 +220,24 @@ async function batchUpdate(updateList) {
 // ─── HubSpot Files API helpers ────────────────────────────────────────────────
 
 /**
- * Descarga el watermark desde HubSpot Files (quivani/watermark.png).
+ * Descarga el watermark desde HubSpot Files usando su file ID.
  * Se llama una sola vez al inicio de main() y setea WATERMARK_BUFFER.
+ * File: quivani/watermark.png (ID: 212770895196)
  */
 async function fetchWatermarkFromHubSpot() {
-  const qs = new URLSearchParams({ name: WATERMARK_HS_NAME, properties: 'url,name,path' });
-  const res = await fetch(`${HS_BASE}/files/v3/files/search?${qs}`, {
+  // Obtenemos la URL pública del archivo por su ID
+  const metaRes = await fetch(`${HS_BASE}/files/v3/files/${WATERMARK_FILE_ID}`, {
     headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Búsqueda del watermark falló HTTP ${res.status}: ${body}`);
+  if (!metaRes.ok) {
+    const body = await metaRes.text();
+    throw new Error(`No se pudo obtener el watermark (ID ${WATERMARK_FILE_ID}) HTTP ${metaRes.status}: ${body}`);
   }
-  const data = await res.json();
+  const meta = await metaRes.json();
+  if (!meta.url) throw new Error(`El archivo watermark (ID ${WATERMARK_FILE_ID}) no tiene URL pública`);
 
-  // Filtra por nombre exacto y carpeta
-  const match = (data.results ?? []).find(
-    f => f.name === WATERMARK_HS_NAME && f.path?.startsWith(WATERMARK_HS_FOLDER)
-  );
-  if (!match) {
-    throw new Error(
-      `"${WATERMARK_HS_NAME}" no encontrado en la carpeta "${WATERMARK_HS_FOLDER}" de HubSpot Files`
-    );
-  }
-
-  const imgRes = await fetch(match.url);
+  // Descargamos el contenido del archivo
+  const imgRes = await fetch(meta.url);
   if (!imgRes.ok) throw new Error(`Descarga del watermark falló HTTP ${imgRes.status}`);
   return Buffer.from(await imgRes.arrayBuffer());
 }
@@ -406,7 +398,7 @@ async function main() {
   console.log(`⚡  Concurrencia: ${CONCURRENCY} imágenes en paralelo\n`);
 
   // 1 — Descargar watermark desde HubSpot Files
-  console.log(`🖼️   Descargando watermark desde HubSpot Files (${WATERMARK_HS_FOLDER}/${WATERMARK_HS_NAME})…`);
+  console.log(`🖼️   Descargando watermark desde HubSpot Files (ID: ${WATERMARK_FILE_ID})…`);
   WATERMARK_BUFFER = await fetchWatermarkFromHubSpot();
   console.log(`    Watermark listo (${(WATERMARK_BUFFER.length / 1024).toFixed(1)} KB)\n`);
 
