@@ -302,10 +302,24 @@ async function uploadFile(buffer, filename, folderPath) {
 
 /**
  * Aplica el watermark en mosaico sobre un buffer de imagen.
+ * Sharp exige que el watermark sea <= dimensiones de la imagen.
+ * Si la imagen es más pequeña que el watermark, lo redimensionamos antes de tilear.
  */
 async function applyWatermark(imageBuffer) {
-  return sharp(imageBuffer)
-    .composite([{ input: WATERMARK_BUFFER, tile: true, blend: 'over' }])
+  const img  = sharp(imageBuffer);
+  const { width: imgW, height: imgH } = await img.metadata();
+  const { width: wmW,  height: wmH  } = await sharp(WATERMARK_BUFFER).metadata();
+
+  let wmInput = WATERMARK_BUFFER;
+  if (wmW > imgW || wmH > imgH) {
+    // Escala el watermark para que quepa dentro de la imagen (mantiene aspect ratio)
+    wmInput = await sharp(WATERMARK_BUFFER)
+      .resize(Math.min(wmW, imgW), Math.min(wmH, imgH), { fit: 'inside' })
+      .toBuffer();
+  }
+
+  return img
+    .composite([{ input: wmInput, tile: true, blend: 'over' }])
     .jpeg({ quality: 85 })
     .toBuffer();
 }
@@ -463,7 +477,6 @@ async function main() {
   // Clasificamos en creates/updates
   for (const props of results) {
     if (!props) { skipped++; continue; }
-    processed++;
 
     if (existingMap.has(props.reference_number)) {
       toUpdate.push({ id: existingMap.get(props.reference_number), properties: props });
