@@ -243,47 +243,45 @@ async function fetchWatermarkFromHubSpot() {
 }
 
 /**
- * Busca un archivo en HubSpot Files por nombre exacto.
- * Retorna la URL pública o null si no existe.
- *
- * ⚠️  La API limita el parámetro `name` a 20 caracteres.
- * Buscamos con el prefijo de 20 chars y filtramos por nombre exacto client-side.
+ * Carga todos los archivos de una carpeta de HubSpot Files en un Map (filename → url).
+ * Usa paginación para carpetas con muchos archivos.
+ * Evita cualquier búsqueda por nombre (sin límite de 20 chars).
  */
-async function findFileByName(filename) {
-  try {
-    const qs = new URLSearchParams({
-      name: filename.slice(0, 20),  // límite de HubSpot Files search API
-      properties: 'url,name',
-    });
+async function loadFolderFiles(folderPath) {
+  const map = new Map();
+  let after = null;
+
+  do {
+    const qs = new URLSearchParams({ path: folderPath, properties: 'url,name', limit: '100' });
+    if (after) qs.set('after', after);
+
     const res = await fetch(`${HS_BASE}/files/v3/files/search?${qs}`, {
       headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
     });
-    if (!res.ok) return null;
+
+    if (!res.ok) break; // carpeta vacía o aún no existe — OK
+
     const data = await res.json();
-    // La búsqueda devuelve resultados que contienen el prefijo → filtramos por nombre exacto
-    const match = (data.results ?? []).find(f => f.name === filename);
-    return match?.url ?? null;
-  } catch {
-    return null;
-  }
+    for (const file of data.results ?? []) {
+      if (file.name && file.url) map.set(file.name, file.url);
+    }
+
+    after = data.paging?.next?.after ?? null;
+  } while (after);
+
+  return map;
 }
 
 /**
  * Sube un buffer de imagen a HubSpot Files en la carpeta indicada.
  * Retorna la URL pública del archivo subido.
- *
- * @param {Buffer} buffer
- * @param {string} filename
- * @param {string} folderPath  — ej: '/quivani/images-xml' o '/quivani/images-watermark'
+ * En caso de 409 (ya existe — race condition) retorna null; el caller decide qué hacer.
  */
 async function uploadFile(buffer, filename, folderPath) {
   const form = new FormData();
   form.append('file', new Blob([buffer], { type: 'image/jpeg' }), filename);
   form.append('folderPath', folderPath);
-  form.append('options', JSON.stringify({
-    access: 'PUBLIC_INDEXABLE',
-    overwrite: false,
-  }));
+  form.append('options', JSON.stringify({ access: 'PUBLIC_INDEXABLE', overwrite: false }));
 
   const res = await fetch(`${HS_BASE}/files/v3/files`, {
     method: 'POST',
@@ -291,12 +289,7 @@ async function uploadFile(buffer, filename, folderPath) {
     body: form,
   });
 
-  // 409 = archivo ya existe (race condition entre runs) → buscamos la URL existente
-  if (res.status === 409) {
-    const existing = await findFileByName(filename);
-    if (existing) return existing;
-    throw new Error(`Conflicto en upload y no se encontró el archivo: ${filename}`);
-  }
+  if (res.status === 409) return null; // ya existe (race condition), caller usa su map local
 
   if (!res.ok) {
     const body = await res.text();
@@ -312,43 +305,37 @@ async function uploadFile(buffer, filename, folderPath) {
  */
 async function applyWatermark(imageBuffer) {
   return sharp(imageBuffer)
-    .composite([{
-      input: WATERMARK_BUFFER,
-      tile: true,    // repite el PNG sobre toda la imagen (mosaico)
-      blend: 'over',
-    }])
+    .composite([{ input: WATERMARK_BUFFER, tile: true, blend: 'over' }])
     .jpeg({ quality: 85 })
     .toBuffer();
 }
 
 /**
  * Procesa una sola imagen:
- *   1. Genera nombres de archivo para la original y la watermarkeada
- *   2. Verifica si la watermarkeada ya existe en HubSpot Files (cache hit)
- *   3. Si no existe:
- *      a. Descarga la imagen original
- *      b. La sube a quivani/images-xml (original)
- *      c. Aplica watermark y sube a quivani/images-watermark
- *   4. Retorna la URL de la imagen watermarkeada (la que va en all_images)
- *
- * Usa el limiter para controlar concurrencia global.
- * En caso de error retorna la URL original del CRM como fallback.
+ *   1. Genera nombres determinísticos para original y watermarkeada
+ *   2. Cache check contra Maps pre-cargados (sin llamadas API)
+ *   3. Si no existe: descarga → sube original → aplica watermark → sube watermarkeada
+ *   4. Retorna URL watermarkeada (la que va en all_images)
  *
  * Naming:
- *   original    → {ref}_{hash12}.jpg       en quivani/images-xml
- *   watermarked → {ref}_{hash12}_wm.jpg    en quivani/images-watermark
+ *   original    → {ref}_{hash12}.jpg      en quivani/images-xml
+ *   watermarked → {ref}_{hash12}_wm.jpg   en quivani/images-watermark
+ *
+ * @param {string} originalUrl
+ * @param {string} referenceNumber
+ * @param {Map}    existingWm    — Map pre-cargado de quivani/images-watermark
+ * @param {Map}    existingOrig  — Map pre-cargado de quivani/images-xml
  */
-async function processOneImage(originalUrl, referenceNumber) {
+async function processOneImage(originalUrl, referenceNumber, existingWm, existingOrig) {
   return limit(async () => {
-    const hash        = crypto.createHash('sha256').update(originalUrl).digest('hex').slice(0, 12);
+    const hash         = crypto.createHash('sha256').update(originalUrl).digest('hex').slice(0, 12);
     const filenameOrig = `${referenceNumber}_${hash}.jpg`;
     const filenameWm   = `${referenceNumber}_${hash}_wm.jpg`;
 
-    // 1. Cache check: si la watermarkeada ya existe, no hacemos nada más
-    const cachedWm = await findFileByName(filenameWm);
-    if (cachedWm) {
+    // 1. Cache check local (sin API)
+    if (existingWm.has(filenameWm)) {
       imgStats.cached++;
-      return cachedWm;
+      return existingWm.get(filenameWm);
     }
 
     // 2. Descarga imagen original
@@ -356,36 +343,38 @@ async function processOneImage(originalUrl, referenceNumber) {
     if (!dlRes.ok) throw new Error(`Descarga falló HTTP ${dlRes.status}`);
     const imageBuffer = Buffer.from(await dlRes.arrayBuffer());
 
-    // 3. Sube original a quivani/images-xml (si no existe ya)
-    const cachedOrig = await findFileByName(filenameOrig);
-    if (!cachedOrig) {
+    // 3. Sube original (si no existe)
+    if (!existingOrig.has(filenameOrig)) {
       await uploadFile(imageBuffer, filenameOrig, FOLDER_ORIGINALS);
+      existingOrig.set(filenameOrig, true); // marca como subido en este run
     }
 
-    // 4. Aplica watermark y sube a quivani/images-watermark
+    // 4. Aplica watermark y sube
     const watermarked = await applyWatermark(imageBuffer);
     const wmUrl = await uploadFile(watermarked, filenameWm, FOLDER_WATERMARK);
 
+    if (!wmUrl) throw new Error(`Upload retornó null (409 — race condition)`);
+
+    existingWm.set(filenameWm, wmUrl); // actualiza el map para este run
     imgStats.uploaded++;
     return wmUrl;
   });
 }
 
 /**
- * Procesa todas las imágenes de un listing.
- * Lanza todas en paralelo (controlado por el limiter global).
- * Retorna array de URLs watermarkeadas (o URL original del CRM en caso de error).
+ * Procesa todas las imágenes de un listing en paralelo (limitado por el limiter global).
+ * Fallback a URL original del CRM en caso de error por imagen.
  */
-async function processImages(imageUrls, referenceNumber) {
+async function processImages(imageUrls, referenceNumber, existingWm, existingOrig) {
   return Promise.all(
     imageUrls.map(async (url) => {
       try {
-        return await processOneImage(url, referenceNumber);
+        return await processOneImage(url, referenceNumber, existingWm, existingOrig);
       } catch (err) {
         imgStats.failed++;
         const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 12);
-        console.warn(`\n    ⚠️  [${referenceNumber}_${hash}_wm.jpg] falló: ${err.message} — usando URL original`);
-        return url; // fallback a URL del CRM
+        console.warn(`\n    ⚠️  [${referenceNumber}_${hash}_wm.jpg] ${err.message} — usando URL original`);
+        return url;
       }
     })
   );
@@ -437,29 +426,33 @@ async function main() {
   const existingMap = await fetchAllExistingListings();
   console.log(`    ${existingMap.size} registros existentes\n`);
 
-  // 5 — Mapear XML + procesar imágenes (en paralelo entre propiedades)
+  // 5 — Pre-cargar archivos existentes en HubSpot Files (un request por carpeta)
+  console.log('📂  Cargando archivos existentes en HubSpot Files…');
+  const [existingWm, existingOrig] = await Promise.all([
+    loadFolderFiles(FOLDER_WATERMARK),
+    loadFolderFiles(FOLDER_ORIGINALS),
+  ]);
+  console.log(`    ${existingWm.size} watermarked, ${existingOrig.size} originales\n`);
+
+  // 6 — Mapear XML + procesar imágenes (en paralelo entre propiedades)
   console.log('🖼️   Procesando imágenes (descarga → watermark → HubSpot Files)…');
-  console.log('    [cached] = ya existe en HubSpot Files  [↑] = subida nueva\n');
+  console.log('    [cached] = ya en HubSpot Files  [↑] = subida nueva\n');
 
   const toCreate = [];
   const toUpdate = [];
   let skipped = 0;
-  let processed = 0;
 
-  // Lanzamos el procesamiento de todas las propiedades en paralelo
-  // El limiter controla cuántas imágenes se procesan simultáneamente
+  // Lanzamos todas las propiedades en paralelo; el limiter controla la concurrencia real
   const results = await Promise.all(
     xmlItems.map(async (item) => {
       const props = mapXmlToHubspot(item);
       if (!props.reference_number) return null;
 
-      // Extraemos las URLs crudas del XML
       const rawImages = toArray(item.Images?.string)
         .filter(i => typeof i === 'string' && i.startsWith('http'));
 
-      // Procesamos imágenes y sobreescribimos all_images con las URLs de HubSpot
       if (rawImages.length > 0) {
-        const processedUrls = await processImages(rawImages, props.reference_number);
+        const processedUrls = await processImages(rawImages, props.reference_number, existingWm, existingOrig);
         props.all_images = JSON.stringify(processedUrls);
       }
 
