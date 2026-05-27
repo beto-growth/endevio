@@ -263,7 +263,11 @@ async function loadFolderFiles(folderPath) {
 
     const data = await res.json();
     for (const file of data.results ?? []) {
-      if (file.name && file.url) map.set(file.name, file.url);
+      if (!file.url) continue;
+      // HubSpot devuelve `name` SIN extensión (ej: "24294_abc_wm").
+      // Extraemos el filename completo desde la URL, que siempre incluye la extensión.
+      const filename = decodeURIComponent(file.url.split('/').pop().split('?')[0]);
+      if (filename) map.set(filename, file.url);
     }
 
     after = data.paging?.next?.after ?? null;
@@ -281,15 +285,16 @@ async function uploadFile(buffer, filename, folderPath) {
   const form = new FormData();
   form.append('file', new Blob([buffer], { type: 'image/jpeg' }), filename);
   form.append('folderPath', folderPath);
-  form.append('options', JSON.stringify({ access: 'PUBLIC_INDEXABLE', overwrite: false }));
+  // overwrite: true → si el archivo ya existe lo sobreescribe en lugar de crear duplicados
+  // con nombres incrementados (_wm-2.jpg, _wm-3.jpg…). El cache check previo evita
+  // que esto se ejecute para archivos ya existentes en condiciones normales.
+  form.append('options', JSON.stringify({ access: 'PUBLIC_INDEXABLE', overwrite: true }));
 
   const res = await fetch(`${HS_BASE}/files/v3/files`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
     body: form,
   });
-
-  if (res.status === 409) return null; // ya existe (race condition), caller usa su map local
 
   if (!res.ok) {
     const body = await res.text();
@@ -367,9 +372,7 @@ async function processOneImage(originalUrl, referenceNumber, existingWm, existin
     const watermarked = await applyWatermark(imageBuffer);
     const wmUrl = await uploadFile(watermarked, filenameWm, FOLDER_WATERMARK);
 
-    if (!wmUrl) throw new Error(`Upload retornó null (409 — race condition)`);
-
-    existingWm.set(filenameWm, wmUrl); // actualiza el map para este run
+    existingWm.set(filenameWm, wmUrl); // actualiza el map para este run // actualiza el map para este run
     imgStats.uploaded++;
     return wmUrl;
   });
