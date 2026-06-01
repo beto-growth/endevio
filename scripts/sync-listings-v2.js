@@ -92,7 +92,7 @@ function mapXmlToHubspot(item) {
   if (item.Locality)         props.hs_city           = String(item.Locality);
   if (item.LocalityCode)     props.hs_neighborhood   = String(item.LocalityCode);
   if (item.TotalArea != null)props.hs_square_footage = Number(item.TotalArea);
-  if (item.PropertyType)     props.hs_listing_type   = String(item.PropertyType);
+  if (item.PropertyType)     props.xml_property_type = String(item.PropertyType);
 
   // — Custom properties —
   props.reference_number = String(item.ReferenceNumber);
