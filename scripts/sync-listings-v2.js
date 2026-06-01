@@ -414,11 +414,26 @@ async function main() {
   WATERMARK_BUFFER = await fetchWatermarkFromHubSpot();
   console.log(`    Watermark listo (${(WATERMARK_BUFFER.length / 1024).toFixed(1)} KB)\n`);
 
-  // 2 — Fetch XML feed
+  // 2 — Fetch XML feed (con reintentos por si el servidor de ReapCRM falla momentáneamente)
   console.log('📥  Descargando feed XML…');
-  const xmlRes = await fetch(XML_URL);
-  if (!xmlRes.ok) throw new Error(`XML fetch falló con HTTP ${xmlRes.status}`);
-  const xmlText = await xmlRes.text();
+  let xmlText;
+  const XML_RETRIES = 3;
+  const XML_TIMEOUT_MS = 60_000; // 60s — el feed puede pesar varios MB
+  for (let attempt = 1; attempt <= XML_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), XML_TIMEOUT_MS);
+      const xmlRes = await fetch(XML_URL, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!xmlRes.ok) throw new Error(`HTTP ${xmlRes.status}`);
+      xmlText = await xmlRes.text();
+      break; // éxito
+    } catch (err) {
+      if (attempt === XML_RETRIES) throw new Error(`XML fetch falló tras ${XML_RETRIES} intentos: ${err.message}`);
+      console.warn(`    ⚠️  Intento ${attempt} falló (${err.message}), reintentando en 10s…`);
+      await new Promise(r => setTimeout(r, 10_000));
+    }
+  }
   console.log(`    Descargado ${(xmlText.length / 1024).toFixed(1)} KB\n`);
 
   // 3 — Parse XML
