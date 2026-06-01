@@ -426,6 +426,8 @@ async function main() {
   const parser = new XMLParser({
     ignoreAttributes: false,
     parseTagValue: true,
+    processEntities: false,   // evita el límite de 1000 expansiones de entidades
+    htmlEntities: true,       // reconoce entidades HTML (&amp; &nbsp; etc.) sin contarlas
     isArray: (tagName) =>
       ['XMLPropertyModelItem', 'string', 'PropertyFeature'].includes(tagName),
   });
