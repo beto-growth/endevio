@@ -92,7 +92,7 @@ function mapXmlToHubspot(item) {
   if (item.Locality)         props.hs_city           = String(item.Locality);
   if (item.LocalityCode)     props.hs_neighborhood   = String(item.LocalityCode);
   if (item.TotalArea != null)props.hs_square_footage = Number(item.TotalArea);
-  if (item.PropertyType)     props.xml_property_type = String(item.PropertyType);
+  if (item.PropertyType)     props.xml_listing_type  = String(item.PropertyType);
 
   // — Custom properties —
   props.reference_number = String(item.ReferenceNumber);
@@ -215,6 +215,41 @@ async function batchUpdate(updateList) {
     } catch (e) { errors.push(e.message); }
   }
   return { updated, errors };
+}
+
+// ─── HubSpot property setup ───────────────────────────────────────────────────
+
+/**
+ * Asegura que una propiedad exista en el objeto de HubSpot.
+ * Si no existe, la crea automáticamente usando el primer grupo disponible.
+ */
+async function ensureProperty(objectType, name, label, type, fieldType) {
+  // 1. Verificar si ya existe
+  const checkRes = await fetch(`${HS_BASE}/crm/v3/properties/${objectType}/${name}`, {
+    headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
+  });
+  if (checkRes.ok) return; // ya existe, nada que hacer
+
+  // 2. Obtener un groupName válido para este objeto
+  const groupsRes = await fetch(`${HS_BASE}/crm/v3/properties/${objectType}/groups`, {
+    headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
+  });
+  if (!groupsRes.ok) throw new Error(`No se pudieron obtener grupos para ${objectType}`);
+  const groups = await groupsRes.json();
+  const groupName = groups.results?.[0]?.name;
+  if (!groupName) throw new Error(`No se encontró ningún grupo para ${objectType}`);
+
+  // 3. Crear la propiedad
+  const createRes = await fetch(`${HS_BASE}/crm/v3/properties/${objectType}`, {
+    method: 'POST',
+    headers: HS_JSON_HEADERS,
+    body: JSON.stringify({ name, label, type, fieldType, groupName }),
+  });
+  if (!createRes.ok) {
+    const body = await createRes.text();
+    throw new Error(`No se pudo crear la propiedad "${name}": ${body}`);
+  }
+  console.log(`    ✅  Propiedad creada: ${name} (${type}/${fieldType}) en grupo "${groupName}"`);
 }
 
 // ─── HubSpot Files API helpers ────────────────────────────────────────────────
@@ -409,12 +444,17 @@ async function main() {
   console.log(`📁  Watermarked → ${FOLDER_WATERMARK}`);
   console.log(`⚡  Concurrencia: ${CONCURRENCY} imágenes en paralelo\n`);
 
-  // 1 — Descargar watermark desde HubSpot Files
+  // 1 — Verificar / crear propiedades necesarias en HubSpot
+  console.log('🔧  Verificando propiedades del objeto listings…');
+  await ensureProperty('listings', 'xml_property_type', 'Property Type (XML)', 'string', 'text');
+  console.log('    OK\n');
+
+  // 3 — Descargar watermark desde HubSpot Files
   console.log(`🖼️   Descargando watermark desde HubSpot Files (ID: ${WATERMARK_FILE_ID})…`);
   WATERMARK_BUFFER = await fetchWatermarkFromHubSpot();
   console.log(`    Watermark listo (${(WATERMARK_BUFFER.length / 1024).toFixed(1)} KB)\n`);
 
-  // 2 — Fetch XML feed (con reintentos por si el servidor de ReapCRM falla momentáneamente)
+  // 4 — Fetch XML feed (con reintentos por si el servidor de ReapCRM falla momentáneamente)
   console.log('📥  Descargando feed XML…');
   let xmlText;
   const XML_RETRIES = 3;
