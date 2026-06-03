@@ -219,25 +219,57 @@ async function loadFolderFiles(folderPath) {
   return map;
 }
 
-async function uploadFile(buffer, filename, folderPath) {
-  const form = new FormData();
-  form.append('file', new Blob([buffer], { type: 'image/jpeg' }), filename);
-  form.append('folderPath', folderPath);
-  form.append('options', JSON.stringify({ access: 'PUBLIC_INDEXABLE', overwrite: true }));
+/**
+ * Descarga una imagen con reintentos automáticos para errores transitorios del CRM (500/502).
+ */
+async function downloadImage(url, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url);
+    if (res.ok) return Buffer.from(await res.arrayBuffer());
 
-  const res = await fetch(`${HS_BASE}/files/v3/files`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
-    body: form,
-  });
+    const transient = res.status === 500 || res.status === 502 || res.status === 503;
+    if (!transient || attempt === maxRetries)
+      throw new Error(`Descarga falló HTTP ${res.status}`);
 
-  if (!res.ok) {
+    await sleep(2_000 * attempt); // 2s, 4s
+  }
+}
+
+/**
+ * Sube un archivo a HubSpot Files con reintentos y backoff exponencial en 429.
+ * HubSpot Files API: ~190 req / 10s. Con alta concurrencia podemos excederlo.
+ */
+async function uploadFile(buffer, filename, folderPath, maxRetries = 4) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const form = new FormData();
+    form.append('file', new Blob([buffer], { type: 'image/jpeg' }), filename);
+    form.append('folderPath', folderPath);
+    form.append('options', JSON.stringify({ access: 'PUBLIC_INDEXABLE', overwrite: true }));
+
+    const res = await fetch(`${HS_BASE}/files/v3/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
+      body: form,
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return data.url;
+    }
+
+    if (res.status === 429) {
+      // Rate limit — respetamos el Retry-After si viene, o usamos backoff propio
+      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '0', 10);
+      const waitMs = retryAfter > 0 ? retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 30_000);
+      if (attempt < maxRetries) {
+        await sleep(waitMs);
+        continue;
+      }
+    }
+
     const body = await res.text();
     throw new Error(`Upload falló HTTP ${res.status}: ${body}`);
   }
-
-  const data = await res.json();
-  return data.url;
 }
 
 async function applyWatermark(imageBuffer) {
@@ -282,10 +314,8 @@ async function processOneImage(url, referenceNumber, existingWm, existingOrig) {
       return existingWm.get(filenameWm);
     }
 
-    // Descarga
-    const dlRes = await fetch(url);
-    if (!dlRes.ok) throw new Error(`Descarga falló HTTP ${dlRes.status}`);
-    const imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+    // Descarga (con reintentos para errores 500/502 del CRM)
+    const imageBuffer = await downloadImage(url);
 
     // Sube original (si no existe)
     if (!existingOrig.has(filenameOrig)) {

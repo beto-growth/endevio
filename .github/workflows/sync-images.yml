@@ -45,5 +45,5 @@ jobs:
           HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_TOKEN }}
           # Al disparar manualmente se pueden sobreescribir estos valores
           LISTINGS_PER_RUN: ${{ github.event.inputs.listings_per_run || '500' }}
-          IMAGE_CONCURRENCY: ${{ github.event.inputs.image_concurrency || '10' }}
+          IMAGE_CONCURRENCY: ${{ github.event.inputs.image_concurrency || '5' }}
         run: node sync-images.js
