@@ -103,7 +103,7 @@ async function fetchListingsNeedingImages() {
       filterGroups: [{
         filters: [{ propertyName: 'all_images', operator: 'HAS_PROPERTY' }],
       }],
-      properties: ['reference_number', 'all_images'],
+      properties: ['reference_number', 'all_images', 'transaction_type'],
       limit: 100,
     };
     if (after) body.after = after;
@@ -129,7 +129,8 @@ async function fetchListingsNeedingImages() {
       results.push({
         id:               record.id,
         reference_number: record.properties.reference_number,
-        imageUrls:        JSON.parse(allImagesJson), // todas las URLs (CRM y HubSpot mezcladas)
+        transaction_type: record.properties.transaction_type ?? '',
+        imageUrls:        JSON.parse(allImagesJson),
       });
 
       if (results.length >= LISTINGS_PER_RUN) break;
@@ -141,6 +142,13 @@ async function fetchListingsNeedingImages() {
     // Pausa entre páginas de búsqueda para no saturar la API
     await sleep(200);
   }
+
+  // Sale primero, luego Rent
+  results.sort((a, b) => {
+    const aIsSale = a.transaction_type === 'Sale' ? 0 : 1;
+    const bIsSale = b.transaction_type === 'Sale' ? 0 : 1;
+    return aIsSale - bIsSale;
+  });
 
   return results;
 }
