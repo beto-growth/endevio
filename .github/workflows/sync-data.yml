@@ -1,0 +1,37 @@
+name: Sync Listings — Data
+
+on:
+  # 12:00 AM Malta (CEST: 22:00 UTC | CET: 23:00 UTC)
+  # 12:00 PM Malta (CEST: 10:00 UTC | CET: 11:00 UTC)
+  schedule:
+    - cron: '0 22 * * *'
+    - cron: '0 10 * * *'
+
+  workflow_dispatch:
+
+jobs:
+  sync-data:
+    name: Data Sync (metadata · incremental)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Run data sync
+        working-directory: scripts
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_TOKEN }}
+        run: node sync-data.js

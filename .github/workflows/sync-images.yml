@@ -1,0 +1,49 @@
+name: Sync Listings — Images
+
+on:
+  # 2:00 AM Malta (CEST: 00:00 UTC)
+  # 2:00 PM Malta (CEST: 12:00 UTC)
+  schedule:
+    - cron: '0 0 * * *'
+    - cron: '0 12 * * *'
+
+  workflow_dispatch:
+    inputs:
+      listings_per_run:
+        description: 'Listings a procesar por run (default: 500)'
+        required: false
+        default: '500'
+      image_concurrency:
+        description: 'Imágenes en paralelo (default: 10)'
+        required: false
+        default: '10'
+
+jobs:
+  sync-images:
+    name: Image Sync (watermark · incremental)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 6h — máximo de GitHub Actions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Run image sync
+        working-directory: scripts
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_TOKEN }}
+          # Al disparar manualmente se pueden sobreescribir estos valores
+          LISTINGS_PER_RUN: ${{ github.event.inputs.listings_per_run || '500' }}
+          IMAGE_CONCURRENCY: ${{ github.event.inputs.image_concurrency || '10' }}
+        run: node sync-images.js
