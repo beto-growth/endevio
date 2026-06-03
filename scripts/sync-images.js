@@ -388,7 +388,7 @@ async function main() {
 
   const updates = await Promise.all(
     listings.map(async (listing) => {
-      const processedUrls = await Promise.all(
+      const processedUrls = (await Promise.all(
         listing.imageUrls.map(async (url) => {
           try {
             return await processOneImage(url, listing.reference_number, existingWm, existingOrig);
@@ -396,12 +396,12 @@ async function main() {
             imgStats.failed++;
             const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 12);
             console.warn(
-              `    ⚠️  [${listing.reference_number}_${hash}_wm.jpg] ${err.message} — URL original`
+              `    ⚠️  [${listing.reference_number}_${hash}_wm.jpg] ${err.message} — imagen eliminada`
             );
-            return url; // fallback
+            return null; // se filtra abajo
           }
         })
-      );
+      )).filter(url => url !== null);
       return { id: listing.id, all_images: JSON.stringify(processedUrls) };
     })
   );
