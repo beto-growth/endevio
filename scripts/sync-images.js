@@ -274,8 +274,7 @@ async function uploadFile(buffer, filename, folderPath, maxRetries = 4) {
       return data.url;
     }
 
-    if (res.status === 429) {
-      // Rate limit — respetamos el Retry-After si viene, o usamos backoff propio
+    if (res.status === 429 || res.status === 502 || res.status === 503) {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '0', 10);
       const waitMs = retryAfter > 0 ? retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 30_000);
       if (attempt < maxRetries) {
