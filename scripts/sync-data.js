@@ -85,7 +85,7 @@ function mapXmlToHubspot(item) {
 
   if (item.PropertyType)          props.xml_listing_type         = String(item.PropertyType);
   if (item.Purpose)               props.purpose                  = String(item.Purpose);
-  if (item.Description)           props.description              = String(item.Description);
+  if (item.Description)           props.description              = String(item.Description).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   if (item.CountryName)           props.country                  = String(item.CountryName);
   if (item.RegionName)            props.region                   = String(item.RegionName).replace(/^\d+-/, '').trim();
   if (item.InsideArea  != null)   props.inside_area              = Number(item.InsideArea);
