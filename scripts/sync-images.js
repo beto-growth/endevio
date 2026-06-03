@@ -232,12 +232,21 @@ async function loadFolderFiles(folderPath) {
  */
 async function downloadImage(url, maxRetries = 3) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url);
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      if (attempt === maxRetries)
+        throw new Error(`Descarga falló (error de red: ${err.message}) — ${url}`);
+      await sleep(2_000 * attempt);
+      continue;
+    }
+
     if (res.ok) return Buffer.from(await res.arrayBuffer());
 
     const transient = res.status === 500 || res.status === 502 || res.status === 503;
     if (!transient || attempt === maxRetries)
-      throw new Error(`Descarga falló HTTP ${res.status}`);
+      throw new Error(`Descarga falló HTTP ${res.status} — ${url}`);
 
     await sleep(2_000 * attempt); // 2s, 4s
   }
