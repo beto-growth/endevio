@@ -424,21 +424,27 @@ async function main() {
           }
         })
       )).filter(url => url !== null);
-      return { id: listing.id, all_images: processedUrls.length > 0 ? JSON.stringify(processedUrls) : null };
+
+      // Si todas las imágenes fallaron → no actualizar, dejar CRM URLs para reintentar
+      if (processedUrls.length === 0) return null;
+
+      return { id: listing.id, all_images: JSON.stringify(processedUrls) };
     })
   );
+
+  const validUpdates = updates.filter(u => u !== null);
 
   console.log('\n📊  Resumen de imágenes:');
   console.log(`    ✅  Cacheadas (ya en HubSpot Files):     ${imgStats.cached}`);
   console.log(`    ⏭️   Ya procesadas (URLs de HubSpot):    ${imgStats.skipped}`);
   console.log(`    ⬆️   Subidas nuevas (watermark aplicado): ${imgStats.uploaded}`);
   if (imgStats.failed > 0)
-    console.log(`    ⚠️   Fallidas (usando URL original):     ${imgStats.failed}`);
+    console.log(`    ⚠️   Fallidas (se reintentarán):         ${imgStats.failed}`);
   console.log('');
 
   // 5 — Actualizar all_images en HubSpot
-  console.log(`✏️   Actualizando all_images en ${updates.length} listings…`);
-  const { updated, errors } = await batchUpdateImages(updates);
+  console.log(`✏️   Actualizando all_images en ${validUpdates.length} listings…`);
+  const { updated, errors } = await batchUpdateImages(validUpdates);
   console.log(`    ✅  Actualizados: ${updated}`);
   errors.forEach(e => console.error(`    ❌  ${e}`));
   console.log('');
