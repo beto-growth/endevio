@@ -52,6 +52,17 @@ const HS_JSON_HEADERS = {
 
 let WATERMARK_BUFFER = null;
 
+// Circuit breaker: si el CRM acumula muchos fallos de red consecutivos, abortar el run
+const CIRCUIT_BREAKER_THRESHOLD = 10;
+let   crmNetworkFailures = 0;
+function recordCrmFailure() {
+  crmNetworkFailures++;
+  if (crmNetworkFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    throw new Error(`Circuit breaker: ${crmNetworkFailures} fallos de red consecutivos — cdn.reapcrm.com parece estar caído. Abortando run.`);
+  }
+}
+function resetCrmFailures() { crmNetworkFailures = 0; }
+
 const imgStats = { cached: 0, uploaded: 0, failed: 0, skipped: 0 };
 
 // ─── Concurrency limiter ──────────────────────────────────────────────────────
@@ -252,25 +263,30 @@ async function loadFolderFiles(folderPath) {
 /**
  * Descarga una imagen con reintentos automáticos para errores transitorios del CRM (500/502).
  */
-async function downloadImage(url, maxRetries = 3) {
+async function downloadImage(url, maxRetries = 2) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     let res;
     try {
       res = await fetch(url);
     } catch (err) {
-      if (attempt === maxRetries)
+      if (attempt === maxRetries) {
+        recordCrmFailure(); // activa circuit breaker si hay muchos fallos seguidos
         throw new Error(`Descarga falló (error de red: ${err.message}) — ${url}`);
-      await sleep(2_000 * attempt);
+      }
+      await sleep(1_000);
       continue;
     }
 
-    if (res.ok) return Buffer.from(await res.arrayBuffer());
+    if (res.ok) {
+      resetCrmFailures();
+      return Buffer.from(await res.arrayBuffer());
+    }
 
     const transient = res.status === 500 || res.status === 502 || res.status === 503;
     if (!transient || attempt === maxRetries)
       throw new Error(`Descarga falló HTTP ${res.status} — ${url}`);
 
-    await sleep(2_000 * attempt); // 2s, 4s
+    await sleep(1_000);
   }
 }
 
