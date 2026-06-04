@@ -114,11 +114,11 @@ function mapXmlToHubspot(item) {
     props.key_features = `<ul>${lines}</ul>`;
   }
 
-  // Imágenes: siempre guardamos las URLs originales del CRM.
-  // sync-images.js se encarga de procesarlas y actualizar all_images con HubSpot Files URLs.
+  // Imágenes: guardamos las URLs originales del CRM en crm_images.
+  // all_images lo gestiona sync-images.js (watermark). Este script nunca lo sobreescribe.
   const images    = toArray(item.Images?.string);
   const imageUrls = images.filter(i => typeof i === 'string' && i.startsWith('http'));
-  if (imageUrls.length) props.all_images = JSON.stringify(imageUrls);
+  if (imageUrls.length) props.crm_images = JSON.stringify(imageUrls);
 
   return props;
 }
@@ -159,7 +159,7 @@ async function fetchAllExistingListings() {
   do {
     const qs = new URLSearchParams({
       limit: '100',
-      properties: 'reference_number,xml_last_updated,all_images',
+      properties: 'reference_number,xml_last_updated,all_images,crm_images',
     });
     if (after) qs.set('after', after);
 
@@ -172,7 +172,8 @@ async function fetchAllExistingListings() {
         map.set(ref, {
           id:               record.id,
           xml_last_updated: Number(record.properties?.xml_last_updated ?? 0),
-          all_images:       record.properties?.all_images ?? null,
+          all_images:       record.properties?.all_images  ?? null,
+          crm_images:       record.properties?.crm_images  ?? null,
         });
       }
     }
@@ -291,7 +292,8 @@ async function main() {
     const existing = existingMap.get(props.reference_number);
 
     if (!existing) {
-      // Nuevo listing → crear con URLs del CRM en all_images
+      // Nuevo listing → crear. all_images = crm_images para que sync-images lo procese.
+      props.all_images = props.crm_images ?? null;
       toCreate.push(props);
       continue;
     }
@@ -300,14 +302,25 @@ async function main() {
     const oldTs = existing.xml_last_updated;
 
     if (newTs <= oldTs) {
-      // Sin cambios en el CRM → no tocar nada (preserva all_images procesadas)
+      // Sin cambios en el CRM → no tocar nada (preserva all_images con watermarks)
       unchanged++;
       continue;
     }
 
-    // xml_last_updated cambió → el CRM actualizó la propiedad.
-    // Actualizamos todos los campos incluyendo all_images con las URLs nuevas del CRM.
-    // sync-images.js detectará que all_images volvió a tener CRM URLs y reprocessará.
+    // xml_last_updated cambió → actualizar metadata.
+    // Comparar crm_images: solo resetear all_images si las imágenes del CRM cambiaron.
+    const newCrmImages = props.crm_images ?? null;
+    const oldCrmImages = existing.crm_images ?? null;
+    const imagesChanged = newCrmImages !== oldCrmImages;
+
+    if (imagesChanged) {
+      // Imágenes nuevas del CRM → resetear all_images para que sync-images las reprocese
+      props.all_images = newCrmImages;
+    } else {
+      // Solo cambiaron otros campos → preservar all_images con watermarks actuales
+      delete props.all_images;
+    }
+
     toUpdate.push({ id: existing.id, properties: props });
   }
 
