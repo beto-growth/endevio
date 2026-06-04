@@ -235,7 +235,7 @@ async function main() {
     if (remappedUrls.length > 0) {
       // Hay watermarks en caché → restaurar con URLs de HubSpot Files
       stats.remapped += remappedUrls.length;
-      updates.push({ id: listing.id, all_images: JSON.stringify(remappedUrls) });
+      updates.push({ id: listing.id, all_images: remappedUrls.length > 0 ? JSON.stringify(remappedUrls) : null });
     } else {
       // Sin caché → restaurar all_images = crm_images para que sync-images procese
       stats.restored++;

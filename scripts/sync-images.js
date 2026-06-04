@@ -400,7 +400,7 @@ async function main() {
           }
         })
       )).filter(url => url !== null);
-      return { id: listing.id, all_images: JSON.stringify(processedUrls) };
+      return { id: listing.id, all_images: processedUrls.length > 0 ? JSON.stringify(processedUrls) : null };
     })
   );
 
