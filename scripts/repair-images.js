@@ -82,33 +82,31 @@ async function loadWatermarkCache() {
 }
 
 // ─── Buscar listings dañados ──────────────────────────────────────────────────
+// Usa GET /crm/v3/objects (sin límite de 10k) con filtrado client-side.
 
 async function fetchDamagedListings() {
   const results = [];
   let after = null;
+  let total = 0;
 
   while (true) {
-    const body = {
-      filterGroups: [{
-        filters: [{ propertyName: 'all_images', operator: 'HAS_PROPERTY' }],
-      }],
-      properties: ['reference_number', 'all_images'],
-      limit: 100,
-    };
-    if (after) body.after = after;
+    const qs = new URLSearchParams({
+      limit: '100',
+      properties: 'reference_number,all_images',
+    });
+    if (after) qs.set('after', after);
 
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/${HS_OBJECT_TYPE}/search`, {
-      method: 'POST',
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/${HS_OBJECT_TYPE}?${qs}`, {
       headers: HS_JSON_HEADERS,
-      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
       const errBody = await res.text();
-      throw new Error(`Search falló HTTP ${res.status}: ${errBody}`);
+      throw new Error(`List falló HTTP ${res.status}: ${errBody}`);
     }
 
     const data = await res.json();
+    total += data.results?.length ?? 0;
 
     for (const record of data.results ?? []) {
       const allImagesJson = record.properties?.all_images;
@@ -123,8 +121,8 @@ async function fetchDamagedListings() {
     after = data.paging?.next?.after ?? null;
     if (!after) break;
 
-    process.stdout.write(`\r    ${results.length} listings dañados encontrados…`);
-    await sleep(200);
+    process.stdout.write(`\r    Revisados: ${total} | Dañados: ${results.length}…`);
+    await sleep(150);
   }
 
   return results;
