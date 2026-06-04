@@ -1,0 +1,31 @@
+name: Repair Listings — Images
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-images:
+    name: Image Repair (remap watermarks desde caché)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Run image repair
+        working-directory: scripts
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_TOKEN }}
+        run: node repair-images.js
