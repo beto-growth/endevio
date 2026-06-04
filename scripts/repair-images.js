@@ -101,7 +101,7 @@ async function loadWatermarkCache() {
       after = data.paging?.next?.after ?? null;
     } while (after);
 
-    if (countInWindow < 9900) break;
+    if (countInWindow < 9900 || lastSeen <= createdAfter) break;
     createdAfter = lastSeen;
   }
 

@@ -240,7 +240,7 @@ async function loadFolderFiles(folderPath) {
     } while (after);
 
     // Si esta ventana trajo menos de 9900 resultados, ya no hay más
-    if (countInWindow < 9900) break;
+    if (countInWindow < 9900 || lastSeen <= createdAfter) break;
 
     // Avanzar la ventana al último timestamp visto
     createdAfter = lastSeen;
