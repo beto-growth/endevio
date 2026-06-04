@@ -421,48 +421,58 @@ async function main() {
     return;
   }
 
-  // 4 — Procesar imágenes (paralelo entre listings, limitado por el limiter global)
+  // 4 — Procesar y guardar en lotes de FLUSH_SIZE listings
+  // Cada lote se sube a HubSpot en cuanto termina, sin esperar los demás.
+  const FLUSH_SIZE = 20;
   console.log('🖼️   Procesando imágenes…\n');
 
-  const updates = await Promise.all(
-    listings.map(async (listing) => {
-      const processedUrls = (await Promise.all(
-        listing.imageUrls.map(async (url) => {
-          try {
-            return await processOneImage(url, listing.reference_number, existingWm, existingOrig);
-          } catch (err) {
-            imgStats.failed++;
-            const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 12);
-            console.warn(
-              `    ⚠️  [${listing.reference_number}_${hash}_wm.jpg] ${err.message} — imagen eliminada`
-            );
-            return null; // se filtra abajo
-          }
-        })
-      )).filter(url => url !== null);
+  let totalUpdated = 0;
+  const allErrors  = [];
 
-      // Si todas las imágenes fallaron → no actualizar, dejar CRM URLs para reintentar
-      if (processedUrls.length === 0) return null;
+  async function processListing(listing) {
+    const processedUrls = (await Promise.all(
+      listing.imageUrls.map(async (url) => {
+        try {
+          return await processOneImage(url, listing.reference_number, existingWm, existingOrig);
+        } catch (err) {
+          imgStats.failed++;
+          const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 12);
+          console.warn(
+            `    ⚠️  [${listing.reference_number}_${hash}_wm.jpg] ${err.message} — imagen eliminada`
+          );
+          return null;
+        }
+      })
+    )).filter(url => url !== null);
 
-      return { id: listing.id, all_images: JSON.stringify(processedUrls) };
-    })
-  );
+    if (processedUrls.length === 0) return null;
+    return { id: listing.id, all_images: JSON.stringify(processedUrls) };
+  }
 
-  const validUpdates = updates.filter(u => u !== null);
+  for (let i = 0; i < listings.length; i += FLUSH_SIZE) {
+    const chunk   = listings.slice(i, i + FLUSH_SIZE);
+    const results = await Promise.all(chunk.map(processListing));
+    const valid   = results.filter(u => u !== null);
 
+    if (valid.length > 0) {
+      const { updated, errors } = await batchUpdateImages(valid);
+      totalUpdated += updated;
+      allErrors.push(...errors);
+      console.log(`    💾  Lote ${Math.floor(i / FLUSH_SIZE) + 1}: ${valid.length} listings guardados en HubSpot (total: ${totalUpdated})`);
+    }
+  }
+
+  const validUpdates = { length: totalUpdated }; // solo para el resumen
+
+  console.log('\n📊  Resumen de imágenes:');
   console.log('\n📊  Resumen de imágenes:');
   console.log(`    ✅  Cacheadas (ya en HubSpot Files):     ${imgStats.cached}`);
   console.log(`    ⏭️   Ya procesadas (URLs de HubSpot):    ${imgStats.skipped}`);
   console.log(`    ⬆️   Subidas nuevas (watermark aplicado): ${imgStats.uploaded}`);
   if (imgStats.failed > 0)
     console.log(`    ⚠️   Fallidas (se reintentarán):         ${imgStats.failed}`);
-  console.log('');
-
-  // 5 — Actualizar all_images en HubSpot
-  console.log(`✏️   Actualizando all_images en ${validUpdates.length} listings…`);
-  const { updated, errors } = await batchUpdateImages(validUpdates);
-  console.log(`    ✅  Actualizados: ${updated}`);
-  errors.forEach(e => console.error(`    ❌  ${e}`));
+  console.log(`    ✅  Listings actualizados en HubSpot:    ${totalUpdated}`);
+  allErrors.forEach(e => console.error(`    ❌  ${e}`));
   console.log('');
 
   const remaining = listings.length === LISTINGS_PER_RUN;
