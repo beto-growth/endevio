@@ -3,13 +3,17 @@
  *
  * Busca listings que tienen URLs del CRM en all_images (sin procesar),
  * descarga cada imagen, aplica watermark en mosaico, las sube a HubSpot Files
- * y actualiza all_images con las URLs nuevas.
+ * y actualiza all_images con las URLs de HubSpot Files.
+ *
+ * Esquema de propiedades:
+ *   crm_images  — URLs originales del CRM (escrito por sync-data.js, nunca por este script)
+ *   all_images  — URLs watermarked de HubSpot Files (escrito exclusivamente por este script)
+ *
+ * sync-data.js resetea all_images = crm_images solo cuando las imágenes del CRM cambian,
+ * lo que dispara el reprocesamiento en el próximo run de este script.
  *
  * Diseñado para procesar el backlog de 17.000+ listings gradualmente.
  * Cada run procesa hasta LISTINGS_PER_RUN listings y luego termina.
- * El job de GitHub Actions puede correr 2x/día hasta vaciar el backlog.
- *
- * Una vez que todo está procesado, cada run tarda segundos (no hay nada que hacer).
  *
  * Required env var: HUBSPOT_TOKEN
  * Optional env vars:
