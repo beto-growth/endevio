@@ -198,29 +198,53 @@ async function fetchWatermarkFromHubSpot() {
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
+/**
+ * Carga todos los archivos de una carpeta en HubSpot Files.
+ * Pagina en rangos de createdAt para superar el límite de 10k de la Search API.
+ */
 async function loadFolderFiles(folderPath) {
-  const map  = new Map();
-  let after  = null;
+  const map        = new Map();
+  let createdAfter = 0; // timestamp ms — avanza con cada ventana
 
-  do {
-    const qs = new URLSearchParams({ path: folderPath, properties: 'url,name', limit: '100' });
-    if (after) qs.set('after', after);
+  while (true) {
+    let after    = null;
+    let lastSeen = 0;
+    let countInWindow = 0;
 
-    const res = await fetch(`${HS_BASE}/files/v3/files/search?${qs}`, {
-      headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
-    });
-    if (!res.ok) break; // carpeta vacía o no existe aún
+    do {
+      const qs = new URLSearchParams({
+        path:       folderPath,
+        properties: 'url,name,createdAt',
+        limit:      '100',
+        sort:       'createdAt',
+      });
+      if (after)        qs.set('after', after);
+      if (createdAfter) qs.set('createdAfter', new Date(createdAfter + 1).toISOString());
 
-    const data = await res.json();
-    for (const file of data.results ?? []) {
-      if (!file.url) continue;
-      // Extraer filename desde URL (incluye extensión, a diferencia del campo `name`)
-      const filename = decodeURIComponent(file.url.split('/').pop().split('?')[0]);
-      if (filename) map.set(filename, file.url);
-    }
+      const res = await fetch(`${HS_BASE}/files/v3/files/search?${qs}`, {
+        headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` },
+      });
+      if (!res.ok) break;
 
-    after = data.paging?.next?.after ?? null;
-  } while (after);
+      const data = await res.json();
+      for (const file of data.results ?? []) {
+        if (!file.url) continue;
+        const filename = decodeURIComponent(file.url.split('/').pop().split('?')[0]);
+        if (filename) map.set(filename, file.url);
+        const ts = new Date(file.createdAt ?? 0).getTime();
+        if (ts > lastSeen) lastSeen = ts;
+        countInWindow++;
+      }
+
+      after = data.paging?.next?.after ?? null;
+    } while (after);
+
+    // Si esta ventana trajo menos de 9900 resultados, ya no hay más
+    if (countInWindow < 9900) break;
+
+    // Avanzar la ventana al último timestamp visto
+    createdAfter = lastSeen;
+  }
 
   return map;
 }
