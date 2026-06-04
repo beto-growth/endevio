@@ -189,7 +189,21 @@ async function main() {
   // 3 — Remap desde caché (sin descargar ni procesar nada)
   console.log('🔧  Remapeando imágenes desde caché…\n');
 
-  const updates = listings.map((listing) => {
+  // Diagnóstico: mostrar los primeros 3 filenames buscados vs muestra del caché
+  if (listings.length > 0) {
+    const sample = listings[0];
+    const sampleUrl = sample.imageUrls.find(isCrmUrl);
+    if (sampleUrl) {
+      const hash = crypto.createHash('sha256').update(sampleUrl).digest('hex').slice(0, 12);
+      const filenameWm = `${sample.reference_number}_${hash}_wm.jpg`;
+      console.log(`    🔎  Ejemplo filename buscado: ${filenameWm}`);
+      const cacheKeys = [...existingWm.keys()].slice(0, 3);
+      console.log(`    🔎  Ejemplo keys en caché:   ${cacheKeys.join(', ')}\n`);
+    }
+  }
+
+  const updates = [];
+  for (const listing of listings) {
     const repairedUrls = listing.imageUrls
       .map((url) => {
         if (!isCrmUrl(url)) return url; // ya es HubSpot URL, conservar
@@ -208,11 +222,14 @@ async function main() {
       })
       .filter(url => url !== null);
 
-    return { id: listing.id, all_images: JSON.stringify(repairedUrls) };
-  });
+    // Solo actualizar si hay imágenes remapeadas — nunca escribir array vacío
+    if (repairedUrls.length > 0) {
+      updates.push({ id: listing.id, all_images: JSON.stringify(repairedUrls) });
+    }
+  }
 
   // 4 — Actualizar HubSpot
-  console.log(`✏️   Actualizando ${updates.length} listings en HubSpot…`);
+  console.log(`✏️   Actualizando ${updates.length} listings en HubSpot (${listings.length - updates.length} sin caché, quedan intactos)…`);
   const { updated, errors } = await batchUpdateImages(updates);
   stats.updated = updated;
 
